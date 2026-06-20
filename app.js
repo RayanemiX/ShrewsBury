@@ -333,6 +333,8 @@ document.getElementById('checkoutBtn').addEventListener('click', async ()=>{
       user_id: state.user.id, total: newOrder.total, status:'pending'
     }]).select();
     if(error){ toast('Erreur lors de la commande', 'error'); return; }
+    // Recharger les commandes depuis Supabase pour avoir l'id réel
+    await loadUserOrders();
   }
 
   state.orders.unshift(newOrder);
@@ -443,7 +445,18 @@ document.getElementById('registerForm').addEventListener('submit', async (e)=>{
   if(SUPABASE_READY){
     const { data, error } = await supabase.auth.signUp({ email, password: pass, options:{ data:{ name } } });
     if(error){ toast(error.message, 'error'); return; }
-    toast('Compte créé ! Vérifiez votre email.', 'success');
+    // ✅ FIX #2 : insérer le profil dans la table users dès l'inscription
+    if(data?.user){
+      await supabase.from('users').insert([{
+        id: data.user.id,
+        name: name,
+        email: email,
+        role: 'client',
+        balance: 0,
+        loyalty_points: 0
+      }]);
+    }
+    toast('Compte créé ! Vérifiez votre email pour confirmer.', 'success');
   }else{
     state.user = { id:'demo', email, name, role:'client', balance:500, loyalty_points:0 };
     applyUserSession();
@@ -477,7 +490,10 @@ function applyUserSession(){
 /* ---------- 11. COMMANDES (CLIENT) ---------- */
 function renderOrders(){
   const wrap = document.getElementById('ordersList');
-  const myOrders = state.user ? state.orders.filter(o=>o.client===state.user.name) : [];
+  // ✅ FIX #3 : filtrer par user_id (Supabase) OU par name (mode démo)
+  const myOrders = state.user
+    ? state.orders.filter(o => o.user_id === state.user.id || o.client === state.user.name)
+    : [];
   if(myOrders.length===0){
     wrap.innerHTML = `<p style="color:var(--grey-dim); text-align:center;">Aucune commande pour le moment.</p>`;
     return;
@@ -841,15 +857,52 @@ async function loadProductsFromSupabase(){
 async function initSupabaseData(){
   if(!SUPABASE_READY) return;
   await loadProductsFromSupabase();
-  const { data: ordersData } = await supabase.from('orders').select('*');
-  if(ordersData) state.orders = ordersData;
 
-  const { data: session } = await supabase.auth.getSession();
-  if(session?.session?.user){
-    await loadUserProfile(session.session.user);
+  // ✅ FIX #1 : écouter TOUS les changements de session (connexion, lien email, reset mdp, etc.)
+  supabase.auth.onAuthStateChange(async (event, session) => {
+    if(session?.user){
+      await loadUserProfile(session.user);
+      applyUserSession();
+      await loadUserOrders();
+      renderAll();
+    } else {
+      state.user = null;
+      state.orders = [];
+      applyUserSession();
+      renderAll();
+    }
+  });
+
+  // Récupère la session déjà active au chargement de la page
+  const { data: { session } } = await supabase.auth.getSession();
+  if(session?.user){
+    await loadUserProfile(session.user);
     applyUserSession();
+    await loadUserOrders();
   }
   renderAll();
+}
+
+// ✅ FIX #3 : charger les commandes avec le nom du client (pour direction + client)
+async function loadUserOrders(){
+  if(!SUPABASE_READY) return;
+  const isDirection = state.user && ['pdg','co_pdg','directeur','responsable_logistique','employe'].includes(state.user.role);
+  let query;
+  if(isDirection){
+    // La direction voit toutes les commandes avec le nom du client
+    query = supabase.from('orders').select('*, users(name, email)').order('created_at', {ascending: false});
+  } else {
+    // Le client voit seulement les siennes
+    query = supabase.from('orders').select('*').eq('user_id', state.user.id).order('created_at', {ascending: false});
+  }
+  const { data, error } = await query;
+  if(!error && data){
+    state.orders = data.map(o => ({
+      ...o,
+      client: o.users?.name || o.users?.email || state.user?.name || 'Inconnu',
+      date: o.created_at?.slice(0,10) || '',
+    }));
+  }
 }
 
 /* ---------- 24. INITIALISATION GÉNÉRALE ---------- */
