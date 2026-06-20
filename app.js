@@ -6,8 +6,8 @@
 /* ---------- 1. CONFIGURATION SUPABASE ---------- */
 // ⚠️ Remplacez ces valeurs par celles de votre projet Supabase
 // (Project Settings > API)
-const SUPABASE_URL  = 'https://VOTRE-PROJET.supabase.co';
-const SUPABASE_ANON_KEY = 'VOTRE_CLE_ANON_PUBLIC';
+const SUPABASE_URL  = 'https://kyslktaugfqlswejvwqy.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt5c2xrdGF1Z2ZxbHN3ZWp2d3F5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5MjA2MzksImV4cCI6MjA5NzQ5NjYzOX0.K4qAy4DMlqYsKLY-eW0mPYQCtCPEVQImBRuw1P3OC6k';
 
 let supabase = null;
 let SUPABASE_READY = false;
