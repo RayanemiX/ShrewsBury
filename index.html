@@ -127,6 +127,16 @@
     padding:2px 6px;
   }
   .remove-row:hover{color:var(--red-dark);}
+  .item-row .field-row.price-discount{grid-template-columns:1fr 1fr;}
+  .item-warning{
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--red-dark);
+    background:#FBEAEA;
+    border:1px solid #E9C4C4;
+    padding:6px 8px;
+    margin-top:2px;
+  }
 
   button{
     font-family:var(--mono);
@@ -373,9 +383,25 @@
       </div>
 
       <div id="items-container"></div>
-      <button type="button" id="add-item">+ AJOUTER UNE ARME</button>
+      <button type="button" id="add-item">+ AJOUTER UN PRODUIT</button>
 
-      <div class="field" style="margin-top:16px;">
+      <div class="section-title">RÉDUCTION GLOBALE</div>
+      <div class="field-row">
+        <div class="field">
+          <label for="f-discount-type">Type</label>
+          <select id="f-discount-type">
+            <option value="none">Aucune</option>
+            <option value="percent">Pourcentage (%)</option>
+            <option value="fixed">Montant fixe ($)</option>
+          </select>
+        </div>
+        <div class="field" id="f-discount-value-wrap" style="display:none;">
+          <label for="f-discount-value">Valeur</label>
+          <input type="number" min="0" step="1" id="f-discount-value" placeholder="0">
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:4px;">
         <label for="f-notes">Notes (optionnel)</label>
         <textarea id="f-notes" placeholder="Remarques internes sur la vente..."></textarea>
       </div>
@@ -425,17 +451,19 @@
               <th>N° de série</th>
               <th class="num">Qté</th>
               <th class="num">P.U.</th>
+              <th class="num">Remise</th>
               <th class="num">Total</th>
             </tr>
           </thead>
           <tbody id="inv-items-body">
-            <tr><td colspan="5" style="text-align:center;color:var(--muted);font-family:var(--sans);padding:20px;">Aucune arme ajoutée</td></tr>
+            <tr><td colspan="6" style="text-align:center;color:var(--muted);font-family:var(--sans);padding:20px;">Aucun produit ajouté</td></tr>
           </tbody>
         </table>
 
         <div class="inv-total-row">
           <div class="box">
             <div>Sous-total : <span id="inv-subtotal">0 $</span></div>
+            <div id="inv-global-discount-row" style="display:none;">Réduction globale : <span id="inv-global-discount">0 $</span></div>
             <div class="grand">TOTAL : <span id="inv-total">0 $</span></div>
           </div>
         </div>
@@ -481,6 +509,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="config.js"></script>
+<script src="catalog.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
