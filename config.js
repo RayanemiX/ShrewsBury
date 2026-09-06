@@ -14,5 +14,5 @@
 // clé "service_role" (celle-là doit toujours rester secrète).
 // ============================================================
 
-const SUPABASE_URL = "https://VOTRE-PROJET.supabase.co";
-const SUPABASE_ANON_KEY = "VOTRE_CLE_ANON_PUBLIC";
+const SUPABASE_URL = "https://hvawkpeesicygmhvycuz.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh2YXdrcGVlc2ljeWdtaHZ5Y3V6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2ODQ4NzAsImV4cCI6MjEwNDI2MDg3MH0.CEjYs62nhOAn0GS9-xNPVCXjvlL0Hh7gftdT3KA8xm8";
