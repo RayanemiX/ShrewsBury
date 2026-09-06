@@ -2,6 +2,40 @@
 // Shrewsbury Shotguns — Facturier
 // ============================================================
 
+// ---------- Fatal error banner ----------
+// If ANYTHING below throws, we show it on screen instead of failing
+// silently (which looks like "nothing works").
+function showFatalError(message) {
+  let banner = document.getElementById('fatal-error-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'fatal-error-banner';
+    banner.style.cssText =
+      'position:fixed;top:0;left:0;right:0;z-index:9999;background:#8F1420;color:#fff;' +
+      'font-family:monospace;font-size:13px;padding:10px 16px;text-align:left;';
+    document.body.prepend(banner);
+  }
+  banner.innerHTML =
+    '<strong>Erreur JavaScript :</strong> ' + escapeHtmlSafe(message) +
+    ' — vérifie que index.html, app.js, catalog.js et config.js sont tous à jour et bien présents (ouvre la console F12 pour le détail).';
+}
+function escapeHtmlSafe(str) {
+  return String(str ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+window.addEventListener('error', (e) => showFatalError(e.message));
+
+// ---------- DOM helpers (never crash if an element is missing) ----------
+const $ = (id) => document.getElementById(id);
+function on(id, event, handler) {
+  const el = $(id);
+  if (!el) {
+    console.warn(`[Shrewsbury] Élément #${id} introuvable — vérifie index.html.`);
+    return;
+  }
+  el.addEventListener(event, handler);
+}
+
+// ---------- Small utils ----------
 const fmtMoney = (n) => {
   const val = Number(n) || 0;
   return val.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' $';
@@ -25,10 +59,21 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// ---------- Catalog (defensive: works even if catalog.js failed to load) ----------
+const SAFE_CATALOG = typeof CATALOG !== 'undefined' && Array.isArray(CATALOG) ? CATALOG : [];
+const safeFindCatalogItem = typeof findCatalogItem === 'function' ? findCatalogItem : () => null;
+if (SAFE_CATALOG.length === 0) {
+  console.warn('[Shrewsbury] catalog.js introuvable ou vide — le menu déroulant de produits sera vide.');
+}
+
 // ---------- Supabase client (isolated: a bad config must never
 // block the rest of the app, especially the live preview) ----------
 let supabase = null;
 try {
+  if (typeof window.supabase === 'undefined') throw new Error('librairie supabase-js non chargée');
+  if (typeof SUPABASE_URL === 'undefined' || typeof SUPABASE_ANON_KEY === 'undefined') {
+    throw new Error('config.js manquant ou incomplet');
+  }
   supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 } catch (err) {
   console.error('Supabase non configuré correctement :', err);
@@ -68,7 +113,7 @@ function removeItemRow(id) {
 
 function buildCatalogOptions(selectedName) {
   let html = `<option value="" ${!selectedName ? 'selected' : ''}>— Choisir un produit —</option>`;
-  CATALOG.forEach((group) => {
+  SAFE_CATALOG.forEach((group) => {
     html += `<optgroup label="${escapeAttr(group.category)}">`;
     group.items.forEach((it) => {
       const sel = it.name === selectedName ? 'selected' : '';
@@ -81,7 +126,8 @@ function buildCatalogOptions(selectedName) {
 }
 
 function renderItemRows() {
-  const container = document.getElementById('items-container');
+  const container = $('items-container');
+  if (!container) return;
   container.innerHTML = '';
   items.forEach((it) => {
     const row = document.createElement('div');
@@ -146,7 +192,7 @@ function onItemSelectChange(e) {
     item.category = '';
     item.requiresHunting = false;
   } else {
-    const catalogItem = findCatalogItem(value);
+    const catalogItem = safeFindCatalogItem(value);
     item.custom = false;
     item.name = value;
     item.prix = catalogItem ? catalogItem.price : item.prix;
@@ -174,16 +220,16 @@ let currentInvoiceNumber = null; // null until saved
 
 function getFormState() {
   return {
-    acheteur_nom: document.getElementById('f-nom').value.trim(),
-    acheteur_id_carte: document.getElementById('f-carte').value.trim(),
-    ppa_numero: document.getElementById('f-ppa').value.trim(),
-    permis_chasse_numero: document.getElementById('f-chasse').value.trim(),
-    casier_judiciaire: document.getElementById('f-casier').value,
-    casier_detail: document.getElementById('f-casier-detail').value.trim(),
-    date_vente: document.getElementById('f-date').value,
-    notes: document.getElementById('f-notes').value.trim(),
-    discount_type: document.getElementById('f-discount-type').value,
-    discount_value: Number(document.getElementById('f-discount-value').value) || 0,
+    acheteur_nom: ($('f-nom')?.value || '').trim(),
+    acheteur_id_carte: ($('f-carte')?.value || '').trim(),
+    ppa_numero: ($('f-ppa')?.value || '').trim(),
+    permis_chasse_numero: ($('f-chasse')?.value || '').trim(),
+    casier_judiciaire: $('f-casier')?.value || 'Vierge',
+    casier_detail: ($('f-casier-detail')?.value || '').trim(),
+    date_vente: $('f-date')?.value || '',
+    notes: ($('f-notes')?.value || '').trim(),
+    discount_type: $('f-discount-type')?.value || 'none',
+    discount_value: Number($('f-discount-value')?.value) || 0,
     items: items
       .filter((it) => it.name.trim() !== '' || it.serie.trim() !== '' || Number(it.prix) > 0)
       .map((it) => ({
@@ -211,130 +257,137 @@ function computeGlobalDiscount(subtotal, discountType, discountValue) {
   return 0;
 }
 
-// ---------- Discount type toggle ----------
-document.getElementById('f-discount-type').addEventListener('change', (e) => {
-  document.getElementById('f-discount-value-wrap').style.display = e.target.value === 'none' ? 'none' : 'block';
-  renderPreview();
-});
-document.getElementById('f-discount-value').addEventListener('input', () => renderPreview());
-
 function renderPreview(overrideData, overrideNumber) {
   const data = overrideData || getFormState();
   const number = overrideNumber !== undefined ? overrideNumber : currentInvoiceNumber;
 
-  document.getElementById('inv-number').textContent = number
-    ? `FACTURE N° ${String(number).padStart(5, '0')}`
-    : 'FACTURE N° BROUILLON';
-  document.getElementById('inv-number').classList.toggle('draft', !number);
+  const numEl = $('inv-number');
+  if (numEl) {
+    numEl.textContent = number ? `FACTURE N° ${String(number).padStart(5, '0')}` : 'FACTURE N° BROUILLON';
+    numEl.classList.toggle('draft', !number);
+  }
 
-  document.getElementById('inv-date').textContent = `Date : ${fmtDate(data.date_vente || new Date())}`;
-  document.getElementById('inv-nom').textContent = data.acheteur_nom || '—';
-  document.getElementById('inv-carte').textContent = `N° carte d'identité : ${data.acheteur_id_carte || '—'}`;
-  document.getElementById('inv-ppa').textContent = `PPA : ${data.ppa_numero || '—'}`;
-  document.getElementById('inv-chasse').textContent = `Permis de chasse : ${data.permis_chasse_numero || '—'}`;
+  if ($('inv-date')) $('inv-date').textContent = `Date : ${fmtDate(data.date_vente || new Date())}`;
+  if ($('inv-nom')) $('inv-nom').textContent = data.acheteur_nom || '—';
+  if ($('inv-carte')) $('inv-carte').textContent = `N° carte d'identité : ${data.acheteur_id_carte || '—'}`;
+  if ($('inv-ppa')) $('inv-ppa').textContent = `PPA : ${data.ppa_numero || '—'}`;
+  if ($('inv-chasse')) $('inv-chasse').textContent = `Permis de chasse : ${data.permis_chasse_numero || '—'}`;
 
   let casierText = data.casier_judiciaire || '—';
   if (data.casier_judiciaire === 'Non vierge' && data.casier_detail) {
     casierText += ` (${data.casier_detail})`;
   }
-  document.getElementById('inv-casier').textContent = `Casier judiciaire : ${casierText}`;
+  if ($('inv-casier')) $('inv-casier').textContent = `Casier judiciaire : ${casierText}`;
 
-  const body = document.getElementById('inv-items-body');
+  const body = $('inv-items-body');
   const validItems = data.items || [];
-  if (validItems.length === 0) {
-    body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted);font-family:var(--sans);padding:20px;">Aucun produit ajouté</td></tr>`;
-  } else {
-    body.innerHTML = validItems
-      .map((it) => {
-        const total = lineTotal(it);
-        const remiseLabel = it.remise > 0 ? `-${it.remise}%` : '—';
-        return `
-      <tr>
-        <td class="designation">${escapeHtml(it.arme) || '—'}</td>
-        <td>${escapeHtml(it.serie) || '—'}</td>
-        <td class="num">${it.qte}</td>
-        <td class="num">${fmtMoney(it.prix)}</td>
-        <td class="num" style="${it.remise > 0 ? 'color:var(--red-dark);' : ''}">${remiseLabel}</td>
-        <td class="num">${fmtMoney(total)}</td>
-      </tr>`;
-      })
-      .join('');
+  if (body) {
+    if (validItems.length === 0) {
+      body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted);font-family:var(--sans);padding:20px;">Aucun produit ajouté</td></tr>`;
+    } else {
+      body.innerHTML = validItems
+        .map((it) => {
+          const total = lineTotal(it);
+          const remiseLabel = it.remise > 0 ? `-${it.remise}%` : '—';
+          return `
+        <tr>
+          <td class="designation">${escapeHtml(it.arme) || '—'}</td>
+          <td>${escapeHtml(it.serie) || '—'}</td>
+          <td class="num">${it.qte}</td>
+          <td class="num">${fmtMoney(it.prix)}</td>
+          <td class="num" style="${it.remise > 0 ? 'color:var(--red-dark);' : ''}">${remiseLabel}</td>
+          <td class="num">${fmtMoney(total)}</td>
+        </tr>`;
+        })
+        .join('');
+    }
   }
 
   const subtotal = computeSubtotal(validItems);
   const globalDiscount = computeGlobalDiscount(subtotal, data.discount_type, data.discount_value);
   const total = Math.max(0, subtotal - globalDiscount);
 
-  document.getElementById('inv-subtotal').textContent = fmtMoney(subtotal);
-  const discountRow = document.getElementById('inv-global-discount-row');
-  if (globalDiscount > 0) {
-    discountRow.style.display = 'block';
-    document.getElementById('inv-global-discount').textContent = `- ${fmtMoney(globalDiscount)}`;
-  } else {
-    discountRow.style.display = 'none';
+  if ($('inv-subtotal')) $('inv-subtotal').textContent = fmtMoney(subtotal);
+  const discountRow = $('inv-global-discount-row');
+  if (discountRow) {
+    if (globalDiscount > 0) {
+      discountRow.style.display = 'block';
+      if ($('inv-global-discount')) $('inv-global-discount').textContent = `- ${fmtMoney(globalDiscount)}`;
+    } else {
+      discountRow.style.display = 'none';
+    }
   }
-  document.getElementById('inv-total').textContent = fmtMoney(total);
-  document.getElementById('inv-notes-footer').textContent = data.notes ? `Note : ${data.notes}` : '';
+  if ($('inv-total')) $('inv-total').textContent = fmtMoney(total);
+  if ($('inv-notes-footer')) $('inv-notes-footer').textContent = data.notes ? `Note : ${data.notes}` : '';
 
   return { data, subtotal, globalDiscount, total };
 }
 
-// ---------- Casier judiciaire detail toggle ----------
-document.getElementById('f-casier').addEventListener('change', (e) => {
-  document.getElementById('f-casier-detail-wrap').style.display =
-    e.target.value === 'Non vierge' ? 'block' : 'none';
+// ---------- Wire static form controls ----------
+on('f-discount-type', 'change', (e) => {
+  const wrap = $('f-discount-value-wrap');
+  if (wrap) wrap.style.display = e.target.value === 'none' ? 'none' : 'block';
+  renderPreview();
+});
+on('f-discount-value', 'input', () => renderPreview());
+
+on('f-casier', 'change', (e) => {
+  const wrap = $('f-casier-detail-wrap');
+  if (wrap) wrap.style.display = e.target.value === 'Non vierge' ? 'block' : 'none';
   renderPreview();
 });
 
-// ---------- Wire form inputs to live preview ----------
 ['f-nom', 'f-carte', 'f-ppa', 'f-chasse', 'f-casier-detail', 'f-date', 'f-notes'].forEach((id) => {
-  document.getElementById(id).addEventListener('input', () => renderPreview());
+  on(id, 'input', () => renderPreview());
 });
 
-// ---------- Add item / new invoice / save ----------
-document.getElementById('add-item').addEventListener('click', addItemRow);
+on('add-item', 'click', addItemRow);
 
-document.getElementById('btn-new').addEventListener('click', () => {
+on('btn-new', 'click', () => {
   items = [newItem()];
   currentInvoiceNumber = null;
-  document.getElementById('f-nom').value = '';
-  document.getElementById('f-carte').value = '';
-  document.getElementById('f-ppa').value = '';
-  document.getElementById('f-chasse').value = '';
-  document.getElementById('f-casier').value = 'Vierge';
-  document.getElementById('f-casier-detail').value = '';
-  document.getElementById('f-casier-detail-wrap').style.display = 'none';
-  document.getElementById('f-date').value = todayISO();
-  document.getElementById('f-notes').value = '';
-  document.getElementById('f-discount-type').value = 'none';
-  document.getElementById('f-discount-value').value = '';
-  document.getElementById('f-discount-value-wrap').style.display = 'none';
-  document.getElementById('save-status').textContent = '';
+  const setVal = (id, val) => { if ($(id)) $(id).value = val; };
+  setVal('f-nom', '');
+  setVal('f-carte', '');
+  setVal('f-ppa', '');
+  setVal('f-chasse', '');
+  setVal('f-casier', 'Vierge');
+  setVal('f-casier-detail', '');
+  if ($('f-casier-detail-wrap')) $('f-casier-detail-wrap').style.display = 'none';
+  setVal('f-date', todayISO());
+  setVal('f-notes', '');
+  setVal('f-discount-type', 'none');
+  setVal('f-discount-value', '');
+  if ($('f-discount-value-wrap')) $('f-discount-value-wrap').style.display = 'none';
+  if ($('save-status')) $('save-status').textContent = '';
   renderItemRows();
   renderPreview();
 });
 
-document.getElementById('btn-save').addEventListener('click', saveInvoice);
+on('btn-save', 'click', saveInvoice);
 
 async function saveInvoice() {
-  const statusEl = document.getElementById('save-status');
+  const statusEl = $('save-status');
+  const setStatus = (msg, color) => {
+    if (statusEl) {
+      statusEl.textContent = msg;
+      statusEl.style.color = color;
+    }
+  };
 
   if (!supabase) {
-    statusEl.textContent = 'Supabase non configuré — vérifie config.js.';
-    statusEl.style.color = 'var(--red-dark)';
+    setStatus('Supabase non configuré — vérifie config.js.', 'var(--red-dark)');
     return;
   }
 
   const state = getFormState();
 
   if (!state.acheteur_nom) {
-    statusEl.textContent = "Le nom de l'acheteur est requis.";
-    statusEl.style.color = 'var(--red-dark)';
+    setStatus("Le nom de l'acheteur est requis.", 'var(--red-dark)');
     return;
   }
   if (state.items.length === 0) {
-    statusEl.textContent = 'Ajoute au moins un produit avec un prix.';
-    statusEl.style.color = 'var(--red-dark)';
+    setStatus('Ajoute au moins un produit avec un prix.', 'var(--red-dark)');
     return;
   }
 
@@ -342,8 +395,7 @@ async function saveInvoice() {
   const globalDiscount = computeGlobalDiscount(subtotal, state.discount_type, state.discount_value);
   const total = Math.max(0, subtotal - globalDiscount);
 
-  statusEl.style.color = 'var(--muted)';
-  statusEl.textContent = 'Enregistrement...';
+  setStatus('Enregistrement...', 'var(--muted)');
 
   const payload = {
     acheteur_nom: state.acheteur_nom,
@@ -368,23 +420,22 @@ async function saveInvoice() {
 
     currentInvoiceNumber = data.id;
     renderPreview(state, data.id);
-    statusEl.textContent = `Facture N° ${String(data.id).padStart(5, '0')} enregistrée.`;
-    statusEl.style.color = 'var(--brown-soft)';
+    setStatus(`Facture N° ${String(data.id).padStart(5, '0')} enregistrée.`, 'var(--brown-soft)');
     loadHistory();
   } catch (err) {
     console.error(err);
-    statusEl.textContent = "Erreur d'enregistrement — vérifie config.js et la table Supabase.";
-    statusEl.style.color = 'var(--red-dark)';
+    setStatus("Erreur d'enregistrement — vérifie config.js et la table Supabase.", 'var(--red-dark)');
   }
 }
 
 // ---------- History ----------
 async function loadHistory() {
-  const body = document.getElementById('history-body');
-  const sub = document.getElementById('history-sub');
+  const body = $('history-body');
+  const sub = $('history-sub');
+  if (!body || !sub) return;
 
   if (!supabase) {
-    sub.textContent = 'Supabase non configuré — modifie config.js pour activer l\'historique.';
+    sub.textContent = "Supabase non configuré — modifie config.js pour activer l'historique.";
     body.innerHTML = `<tr class="empty-row"><td colspan="5">Historique indisponible.</td></tr>`;
     return;
   }
@@ -446,46 +497,64 @@ function reprint(row) {
   };
   currentInvoiceNumber = row.id;
   renderPreview(data, row.id);
-  document.getElementById('invoice').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const inv = $('invoice');
+  if (inv) inv.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 // ---------- Export as image ----------
 async function captureInvoice() {
-  const node = document.getElementById('invoice');
+  if (typeof html2canvas === 'undefined') {
+    throw new Error('html2canvas non chargé (vérifie ta connexion internet / le CDN)');
+  }
+  const node = $('invoice');
   return html2canvas(node, { backgroundColor: '#ffffff', scale: 2 });
 }
 
-document.getElementById('btn-download').addEventListener('click', async () => {
-  const canvas = await captureInvoice();
-  const link = document.createElement('a');
-  const numLabel = currentInvoiceNumber ? String(currentInvoiceNumber).padStart(5, '0') : 'brouillon';
-  link.download = `facture-shrewsbury-${numLabel}.png`;
-  link.href = canvas.toDataURL('image/png');
-  link.click();
+on('btn-download', 'click', async () => {
+  try {
+    const canvas = await captureInvoice();
+    const link = document.createElement('a');
+    const numLabel = currentInvoiceNumber ? String(currentInvoiceNumber).padStart(5, '0') : 'brouillon';
+    link.download = `facture-shrewsbury-${numLabel}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  } catch (err) {
+    console.error(err);
+    if ($('copy-status')) $('copy-status').textContent = 'Erreur lors du téléchargement : ' + err.message;
+  }
 });
 
-document.getElementById('btn-copy').addEventListener('click', async () => {
-  const statusEl = document.getElementById('copy-status');
+on('btn-copy', 'click', async () => {
+  const statusEl = $('copy-status');
   try {
     const canvas = await captureInvoice();
     canvas.toBlob(async (blob) => {
       try {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        statusEl.textContent = 'Image copiée dans le presse-papiers.';
+        if (statusEl) statusEl.textContent = 'Image copiée dans le presse-papiers.';
       } catch (err) {
         console.error(err);
-        statusEl.textContent = 'Copie impossible sur ce navigateur — utilise plutôt Télécharger.';
+        if (statusEl) statusEl.textContent = 'Copie impossible sur ce navigateur — utilise plutôt Télécharger.';
       }
     }, 'image/png');
   } catch (err) {
     console.error(err);
-    statusEl.textContent = "Erreur lors de la génération de l'image.";
+    if (statusEl) statusEl.textContent = 'Erreur : ' + err.message;
   }
 });
 
-// ---------- Init (always runs, independent of Supabase) ----------
-document.getElementById('f-date').value = todayISO();
-items = [newItem()];
-renderItemRows();
-renderPreview();
-loadHistory();
+// ---------- Init ----------
+function init() {
+  if ($('f-date')) $('f-date').value = todayISO();
+  items = [newItem()];
+  renderItemRows();
+  renderPreview();
+  loadHistory();
+}
+
+try {
+  init();
+} catch (err) {
+  console.error(err);
+  showFatalError(err.message);
+}
