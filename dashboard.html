@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tableau de bord — Shrewsbury Armory</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <div class="eyebrow">Vue d'ensemble</div>
+        <h1>Tableau de bord</h1>
+      </div>
+    </div>
+
+    <div class="stat-row">
+      <div class="stat ok"><div class="label">Recettes du mois</div><div class="value" id="s-recette">—</div></div>
+      <div class="stat red"><div class="label">Dépenses du mois</div><div class="value" id="s-depense">—</div></div>
+      <div class="stat"><div class="label">Armes en stock</div><div class="value" id="s-armes">—</div></div>
+      <div class="stat"><div class="label">Employés actifs</div><div class="value" id="s-employes">—</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Ressources en stock</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Ressource</th><th>Quantité</th></tr></thead>
+          <tbody id="tbl-ressources"><tr><td colspan="2" class="empty-note">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Dernières opérations</h2><a href="comptabilite.html">Voir tout →</a></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Type</th><th>Employé</th><th>Dépense</th><th>Recette</th></tr></thead>
+          <tbody id="tbl-ops"><tr><td colspan="5" class="empty-note">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/app.js"></script>
+<script>
+let ctx;
+(async () => {
+  ctx = await requireAuth();
+  if (!ctx) return;
+  await loadAll();
+
+  // temps réel : toute nouvelle opération recalcule le tableau de bord
+  supabase.channel('dash-comptabilite')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'comptabilite' }, loadAll)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'resources' }, loadResources)
+    .subscribe();
+})();
+
+async function loadAll() {
+  await Promise.all([loadStats(), loadResources(), loadOps()]);
+}
+
+async function loadStats() {
+  const startMonth = new Date(); startMonth.setDate(1); startMonth.setHours(0,0,0,0);
+  const { data: ops } = await supabase.from("comptabilite").select("*").gte("date_operation", startMonth.toISOString().slice(0,10));
+  const recette = (ops||[]).reduce((a,o)=>a+Number(o.recette||0),0);
+  const depense = (ops||[]).reduce((a,o)=>a+Number(o.depense||0),0);
+  document.getElementById("s-recette").textContent = money(recette);
+  document.getElementById("s-depense").textContent = money(depense);
+
+  const { count: armesCount } = await supabase.from("armes_stock").select("id",{count:"exact",head:true}).eq("statut","en_stock");
+  document.getElementById("s-armes").textContent = armesCount ?? 0;
+
+  const { count: empCount } = await supabase.from("employes").select("id",{count:"exact",head:true}).eq("statut","actif");
+  document.getElementById("s-employes").textContent = empCount ?? 0;
+}
+
+async function loadResources() {
+  const { data } = await supabase.from("resources").select("*").order("nom");
+  const tbody = document.getElementById("tbl-ressources");
+  tbody.innerHTML = (data||[]).map(r => `<tr><td>${r.nom}</td><td>${r.quantite_stock}</td></tr>`).join("")
+    || `<tr><td colspan="2" class="empty-note">Aucune ressource.</td></tr>`;
+}
+
+async function loadOps() {
+  const { data } = await supabase.from("comptabilite").select("*, employes(nom,prenom)").order("created_at",{ascending:false}).limit(10);
+  const tbody = document.getElementById("tbl-ops");
+  tbody.innerHTML = (data||[]).map(o => `
+    <tr>
+      <td>${dateFR(o.date_operation)}</td>
+      <td>${o.type_operation}</td>
+      <td>${o.employes ? o.employes.prenom+" "+o.employes.nom : "—"}</td>
+      <td>${money(o.depense)}</td>
+      <td>${money(o.recette)}</td>
+    </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucune opération.</td></tr>`;
+}
+</script>
+</body>
+</html>

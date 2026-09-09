@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clients — Shrewsbury Armory</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar">
+      <div><div class="eyebrow">Registre clients</div><h1>Clients</h1></div>
+      <div id="btn-new"></div>
+    </div>
+
+    <div class="panel" id="panel-new" style="display:none;">
+      <h2>Nouveau client</h2>
+      <div class="field-row">
+        <div class="field"><label>Nom</label><input type="text" id="nc-nom"></div>
+        <div class="field"><label>Prénom</label><input type="text" id="nc-prenom"></div>
+        <div class="field"><label>N° de ville</label><input type="text" id="nc-ville"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>URL carte d'identité</label><input type="url" id="nc-cid" placeholder="https://…"></div>
+        <div class="field"><label>URL permis</label><input type="url" id="nc-permis" placeholder="https://…"></div>
+      </div>
+      <button onclick="createClient()">Créer le client</button>
+      <div class="login-error" id="new-err"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Tous les clients</h2><input type="text" id="search" placeholder="Rechercher…" style="width:220px" oninput="render()"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Nom</th><th>Prénom</th><th>N° de ville</th><th>Carte d'identité</th><th>Permis</th></tr></thead>
+          <tbody id="tbl-body"><tr><td colspan="5" class="empty-note">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/app.js"></script>
+<script>
+let CLIENTS = [], IS_OPERATEUR = false;
+(async () => {
+  const ctx = await requireAuth();
+  if (!ctx) return;
+  IS_OPERATEUR = ctx.profile.role !== "gouvernement";
+  if (IS_OPERATEUR) document.getElementById("btn-new").innerHTML = `<button class="btn-brass" onclick="toggleNew()">+ Nouveau client</button>`;
+  await load();
+  supabase.channel('clients-live').on('postgres_changes', { event:'*', schema:'public', table:'clients' }, load).subscribe();
+})();
+
+function toggleNew(){ const p=document.getElementById("panel-new"); p.style.display = p.style.display==="none"?"block":"none"; }
+
+async function createClient(){
+  const err = document.getElementById("new-err"); err.textContent="";
+  const nom = document.getElementById("nc-nom").value.trim();
+  const prenom = document.getElementById("nc-prenom").value.trim();
+  if (!nom || !prenom) { err.textContent = "Nom et prénom requis."; return; }
+  const { error } = await supabase.from("clients").insert({
+    nom, prenom, numero_ville: document.getElementById("nc-ville").value,
+    carte_identite_url: document.getElementById("nc-cid").value,
+    permis_url: document.getElementById("nc-permis").value
+  });
+  if (error) { err.textContent = error.message; return; }
+  toggleNew();
+  ["nc-nom","nc-prenom","nc-ville","nc-cid","nc-permis"].forEach(id=>document.getElementById(id).value="");
+}
+
+async function load(){
+  const { data } = await supabase.from("clients").select("*").order("nom");
+  CLIENTS = data || [];
+  render();
+}
+
+function render(){
+  const q = (document.getElementById("search").value||"").toLowerCase();
+  const rows = CLIENTS.filter(c => !q || (c.nom+c.prenom+(c.numero_ville||"")).toLowerCase().includes(q));
+  document.getElementById("tbl-body").innerHTML = rows.map(c=>`
+    <tr>
+      <td>${c.nom}</td><td>${c.prenom}</td><td>${c.numero_ville||"—"}</td>
+      <td>${c.carte_identite_url ? `<a href="${c.carte_identite_url}" target="_blank">lien</a>` : "—"}</td>
+      <td>${c.permis_url ? `<a href="${c.permis_url}" target="_blank">lien</a>` : "—"}</td>
+    </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucun client.</td></tr>`;
+}
+</script>
+</body>
+</html>

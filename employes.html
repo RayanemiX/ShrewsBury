@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Employés — Shrewsbury Armory</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar">
+      <div><div class="eyebrow">Ressources humaines</div><h1>Employés</h1></div>
+      <div id="btn-new"></div>
+    </div>
+
+    <div class="panel" id="panel-new" style="display:none;">
+      <h2>Nouvel employé</h2>
+      <div class="field-row">
+        <div class="field"><label>Nom</label><input type="text" id="ne-nom"></div>
+        <div class="field"><label>Prénom</label><input type="text" id="ne-prenom"></div>
+        <div class="field"><label>Poste</label><input type="text" id="ne-poste" placeholder="Vendeur, Armurier…"></div>
+        <div class="field"><label>Date d'entrée</label><input type="date" id="ne-date"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Statut</label>
+          <select id="ne-statut"><option value="actif">Actif</option><option value="suspendu">Suspendu</option><option value="licencie">Licencié</option></select>
+        </div>
+        <div class="field"><label>Salaire fixe ($)</label><input type="number" id="ne-salaire" value="0"></div>
+        <div class="field"><label>Carte d'identité (image)</label><input type="file" id="ne-cid" accept="image/*"></div>
+        <div class="field"><label>Contrat (image/pdf)</label><input type="file" id="ne-contrat" accept="image/*,application/pdf"></div>
+      </div>
+      <button onclick="createEmploye()">Créer l'employé</button>
+      <div class="login-error" id="new-err"></div>
+    </div>
+
+    <div id="employes-list"></div>
+  </div>
+</div>
+
+<!-- Modale paiement -->
+<div id="pay-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:50;">
+  <div class="panel" style="width:360px;">
+    <h2>Ajouter un paiement</h2>
+    <div class="field"><label>Type</label>
+      <select id="pay-type"><option value="prime">Prime</option><option value="augmentation">Augmentation</option><option value="commission">Commission</option><option value="salaire">Salaire</option></select>
+    </div>
+    <div class="field"><label>Montant ($)</label><input type="number" id="pay-montant" value="0"></div>
+    <div class="field"><label>Description</label><input type="text" id="pay-desc"></div>
+    <div style="display:flex; gap:10px;"><button onclick="confirmPay()">Enregistrer</button><button class="btn-ghost" onclick="closePay()">Annuler</button></div>
+    <div class="login-error" id="pay-err"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/app.js"></script>
+<script>
+let IS_OPERATEUR = false, EMPLOYES = [], PAIEMENTS = [];
+(async () => {
+  const ctx = await requireAuth();
+  if (!ctx) return;
+  IS_OPERATEUR = ctx.profile.role !== "gouvernement";
+  if (IS_OPERATEUR) document.getElementById("btn-new").innerHTML = `<button class="btn-brass" onclick="togglePanelNew()">+ Nouvel employé</button>`;
+  document.getElementById("ne-date").valueAsDate = new Date();
+
+  await loadAll();
+  supabase.channel('emp-live')
+    .on('postgres_changes', { event:'*', schema:'public', table:'employes' }, loadAll)
+    .on('postgres_changes', { event:'*', schema:'public', table:'employe_paiements' }, loadAll)
+    .subscribe();
+})();
+
+function togglePanelNew(){ const p=document.getElementById("panel-new"); p.style.display = p.style.display==="none"?"block":"none"; }
+
+async function uploadFile(file, folder){
+  if (!file) return null;
+  const path = folder + "/" + Date.now() + "_" + file.name.replace(/\s+/g,"_");
+  const { error } = await supabase.storage.from("documents").upload(path, file);
+  if (error) { alert("Upload échoué : " + error.message); return null; }
+  const { data } = supabase.storage.from("documents").getPublicUrl(path);
+  return data.publicUrl;
+}
+
+async function createEmploye(){
+  const err = document.getElementById("new-err"); err.textContent = "";
+  const nom = document.getElementById("ne-nom").value.trim();
+  const prenom = document.getElementById("ne-prenom").value.trim();
+  if (!nom || !prenom) { err.textContent = "Nom et prénom requis."; return; }
+
+  const cidFile = document.getElementById("ne-cid").files[0];
+  const contratFile = document.getElementById("ne-contrat").files[0];
+  const [cidUrl, contratUrl] = await Promise.all([uploadFile(cidFile,"cartes"), uploadFile(contratFile,"contrats")]);
+
+  const { error } = await supabase.from("employes").insert({
+    nom, prenom, poste: document.getElementById("ne-poste").value,
+    date_entree: document.getElementById("ne-date").value,
+    statut: document.getElementById("ne-statut").value,
+    salaire_fixe: Number(document.getElementById("ne-salaire").value),
+    carte_identite_url: cidUrl, contrat_url: contratUrl
+  });
+  if (error) { err.textContent = error.message; return; }
+  togglePanelNew();
+  ["ne-nom","ne-prenom","ne-poste"].forEach(id=>document.getElementById(id).value="");
+}
+
+async function loadAll(){
+  const [{data:emps},{data:pays}] = await Promise.all([
+    supabase.from("employes").select("*").order("nom"),
+    supabase.from("employe_paiements").select("*").order("date_paiement",{ascending:false})
+  ]);
+  EMPLOYES = emps||[]; PAIEMENTS = pays||[];
+  render();
+}
+
+function render(){
+  const statutPill = { actif:"ok", suspendu:"warn", licencie:"danger" };
+  document.getElementById("employes-list").innerHTML = EMPLOYES.map(e=>{
+    const pays = PAIEMENTS.filter(p=>p.employe_id===e.id).slice(0,8);
+    const totalPaiements = pays.reduce((a,p)=>a+Number(p.montant),0);
+    return `
+    <div class="panel">
+      <div class="panel-head">
+        <h2>${e.prenom} ${e.nom} <span class="pill ${statutPill[e.statut]}">${e.statut}</span></h2>
+        ${IS_OPERATEUR ? `<button class="btn-sm" onclick="openPay('${e.id}')">+ Paiement</button>` : ""}
+      </div>
+      <div class="field-row" style="font-size:13px; color:var(--text-dim);">
+        <div>Poste : <b style="color:var(--text)">${e.poste||"—"}</b></div>
+        <div>Entrée : <b style="color:var(--text)">${dateFR(e.date_entree)}</b></div>
+        <div>Salaire fixe : <b style="color:var(--text)">${money(e.salaire_fixe)}</b></div>
+        <div>Carte d'identité : ${e.carte_identite_url ? `<a href="${e.carte_identite_url}" target="_blank">voir</a>`:"—"}</div>
+        <div>Contrat : ${e.contrat_url ? `<a href="${e.contrat_url}" target="_blank">voir</a>`:"—"}</div>
+      </div>
+      <h3 style="margin-top:12px;">Historique des paiements (${money(totalPaiements)} récents)</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Type</th><th>Montant</th><th>Description</th></tr></thead>
+          <tbody>${pays.map(p=>`<tr><td>${dateFR(p.date_paiement)}</td><td>${p.type}</td><td>${money(p.montant)}</td><td>${p.description||"—"}</td></tr>`).join("")
+            || `<tr><td colspan="4" class="empty-note">Aucun paiement.</td></tr>`}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join("") || `<div class="empty-note">Aucun employé.</div>`;
+}
+
+let payTarget = null;
+function openPay(id){ payTarget=id; document.getElementById("pay-modal").style.display="flex"; document.getElementById("pay-err").textContent=""; }
+function closePay(){ document.getElementById("pay-modal").style.display="none"; }
+async function confirmPay(){
+  const err = document.getElementById("pay-err");
+  const { error } = await supabase.from("employe_paiements").insert({
+    employe_id: payTarget, type: document.getElementById("pay-type").value,
+    montant: Number(document.getElementById("pay-montant").value),
+    description: document.getElementById("pay-desc").value
+  });
+  if (error) { err.textContent = error.message; return; }
+  closePay();
+}
+</script>
+</body>
+</html>

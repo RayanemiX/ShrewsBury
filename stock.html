@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stock — Shrewsbury Armory</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar">
+      <div><div class="eyebrow">Inventaire en temps réel</div><h1>Stock</h1></div>
+    </div>
+
+    <div class="panel" id="panel-add-res">
+      <div class="panel-head"><h2>Stock de ressources</h2>
+        <button class="btn-brass btn-sm" onclick="toggleNewRes()">+ Nouvelle ressource</button>
+      </div>
+      <div class="field-row" id="new-res-form" style="display:none;">
+        <div class="field"><label>Nom de la ressource</label><input type="text" id="nr-nom" placeholder="ex: Fibre de carbone"></div>
+        <div class="field"><label>Catégorie</label>
+          <select id="nr-cat"><option value="materiau">Matériau</option><option value="peinture">Peinture</option><option value="autre">Autre</option></select>
+        </div>
+        <div class="field" style="align-self:flex-end;"><button onclick="createResource()">Créer</button></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Type de ressource</th><th>Catégorie</th><th>Quantité en stock</th></tr></thead>
+          <tbody id="tbl-res"><tr><td colspan="3" class="empty-note">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Stock d'articles (non sérialisés)</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Article</th><th>Catégorie</th><th>Quantité en stock</th><th>Prix</th></tr></thead>
+          <tbody id="tbl-articles"><tr><td colspan="4" class="empty-note">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Armes sérialisées</h2></div>
+      <div class="field-row">
+        <div class="field"><label>Filtrer par statut</label>
+          <select id="filter-statut" onchange="renderArmes()">
+            <option value="">Tous</option>
+            <option value="en_stock">En stock</option>
+            <option value="vendu">Vendu</option>
+            <option value="reserve">Réservé</option>
+            <option value="retire">Retiré</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>N° de série</th><th>Arme</th><th>Statut</th><th>Date d'entrée</th><th>Notes</th></tr></thead>
+          <tbody id="tbl-armes"><tr><td colspan="5" class="empty-note">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/app.js"></script>
+<script>
+let ARMES = [];
+(async () => {
+  const ctx = await requireAuth();
+  if (!ctx) return;
+  if (ctx.profile.role === "gouvernement") document.querySelector("#panel-add-res .btn-brass").style.display = "none";
+
+  await loadAll();
+  supabase.channel('stock-live')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'resources' }, loadResources)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'articles' }, loadArticles)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'armes_stock' }, loadArmes)
+    .subscribe();
+})();
+
+async function loadAll(){ await Promise.all([loadResources(), loadArticles(), loadArmes()]); }
+
+function toggleNewRes(){
+  const f = document.getElementById("new-res-form");
+  f.style.display = f.style.display === "none" ? "flex" : "none";
+}
+async function createResource(){
+  const nom = document.getElementById("nr-nom").value.trim();
+  const categorie = document.getElementById("nr-cat").value;
+  if (!nom) return;
+  const { error } = await supabase.rpc("fn_ajouter_ressource", { p_nom: nom, p_categorie: categorie });
+  if (error) { alert(error.message); return; }
+  document.getElementById("nr-nom").value = "";
+  toggleNewRes();
+}
+
+async function loadResources(){
+  const { data } = await supabase.from("resources").select("*").order("nom");
+  document.getElementById("tbl-res").innerHTML = (data||[]).map(r=>`
+    <tr><td>${r.nom}</td><td>${r.categorie||"—"}</td><td>${r.quantite_stock}</td></tr>`).join("")
+    || `<tr><td colspan="3" class="empty-note">Aucune ressource.</td></tr>`;
+}
+
+async function loadArticles(){
+  const { data } = await supabase.from("articles").select("*").eq("est_serialise", false).order("nom");
+  document.getElementById("tbl-articles").innerHTML = (data||[]).map(a=>`
+    <tr><td>${a.nom}</td><td>${a.categorie}</td><td>${a.quantite_stock}</td><td>${money(a.prix)}</td></tr>`).join("")
+    || `<tr><td colspan="4" class="empty-note">Aucun article non sérialisé.</td></tr>`;
+}
+
+async function loadArmes(){
+  const { data } = await supabase.from("armes_stock").select("*, articles(nom)").order("date_entree",{ascending:false});
+  ARMES = data || [];
+  renderArmes();
+}
+function renderArmes(){
+  const f = document.getElementById("filter-statut").value;
+  const rows = ARMES.filter(a => !f || a.statut === f);
+  const pillClass = { en_stock:"ok", vendu:"danger", reserve:"warn", retire:"warn" };
+  document.getElementById("tbl-armes").innerHTML = rows.map(a=>`
+    <tr>
+      <td>${a.numero_serie}</td>
+      <td>${a.articles?.nom || "—"}</td>
+      <td><span class="pill ${pillClass[a.statut]}">${a.statut.replace("_"," ")}</span></td>
+      <td>${dateFR(a.date_entree)}</td>
+      <td>${a.notes||"—"}</td>
+    </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucune arme.</td></tr>`;
+}
+</script>
+</body>
+</html>

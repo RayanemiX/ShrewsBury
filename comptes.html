@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comptes — Shrewsbury Armory</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><div><div class="eyebrow">Réservé au PDG</div><h1>Comptes & accès</h1></div></div>
+
+    <div class="panel">
+      <p style="font-size:13px; color:var(--text-dim);">
+        Cette page attribue un <b>rôle</b> à un compte déjà créé dans Supabase.
+        Pour créer un nouveau compte (nouvel e-mail + mot de passe), allez d'abord dans
+        <b>Supabase → Authentication → Users → Add user</b>, copiez son UUID, puis renseignez-le ici.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Attribuer un rôle à un UUID</h2>
+      <div class="field-row">
+        <div class="field" style="flex:2;"><label>UUID du compte (Supabase Auth)</label><input type="text" id="nu-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
+        <div class="field"><label>Nom affiché</label><input type="text" id="nu-nom"></div>
+        <div class="field"><label>Rôle</label>
+          <select id="nu-role"><option value="pdg">PDG</option><option value="gestionnaire">Gestionnaire</option><option value="gouvernement">Gouvernement</option></select>
+        </div>
+      </div>
+      <button onclick="createProfile()">Enregistrer</button>
+      <div class="login-error" id="err"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Comptes existants</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Nom</th><th>Rôle</th><th>Actif</th><th></th></tr></thead>
+          <tbody id="tbl-body"><tr><td colspan="4" class="empty-note">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/app.js"></script>
+<script>
+let PROFILES = [];
+(async () => {
+  const ctx = await requireAuth(["pdg"]);
+  if (!ctx) return;
+  await load();
+  supabase.channel('profiles-live').on('postgres_changes', { event:'*', schema:'public', table:'profiles' }, load).subscribe();
+})();
+
+async function createProfile(){
+  const err = document.getElementById("err"); err.textContent="";
+  const id = document.getElementById("nu-id").value.trim();
+  const nom = document.getElementById("nu-nom").value.trim();
+  const role = document.getElementById("nu-role").value;
+  if (!id || !nom) { err.textContent = "UUID et nom requis."; return; }
+  const { error } = await supabase.from("profiles").upsert({ id, nom, role, actif: true });
+  if (error) { err.textContent = error.message; return; }
+  document.getElementById("nu-id").value = ""; document.getElementById("nu-nom").value = "";
+}
+
+async function load(){
+  const { data } = await supabase.from("profiles").select("*").order("nom");
+  PROFILES = data || [];
+  document.getElementById("tbl-body").innerHTML = PROFILES.map(p=>`
+    <tr>
+      <td>${p.nom}</td>
+      <td>${p.role}</td>
+      <td>${p.actif ? '<span class="pill ok">actif</span>' : '<span class="pill danger">désactivé</span>'}</td>
+      <td><button class="btn-ghost btn-sm" onclick="toggleActif('${p.id}', ${p.actif})">${p.actif ? "Désactiver" : "Réactiver"}</button></td>
+    </tr>`).join("") || `<tr><td colspan="4" class="empty-note">Aucun compte.</td></tr>`;
+}
+
+async function toggleActif(id, current){
+  await supabase.from("profiles").update({ actif: !current }).eq("id", id);
+}
+</script>
+</body>
+</html>

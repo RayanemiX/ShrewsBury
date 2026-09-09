@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comptabilité — Shrewsbury Armory</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar">
+      <div><div class="eyebrow">Grand livre — historique complet</div><h1>Comptabilité</h1></div>
+      <div>
+        <button class="btn-ghost" onclick="exportCSV()">Exporter en CSV</button>
+      </div>
+    </div>
+
+    <div class="stat-row">
+      <div class="stat ok"><div class="label">Total recettes</div><div class="value" id="s-recette">—</div></div>
+      <div class="stat red"><div class="label">Total dépenses</div><div class="value" id="s-depense">—</div></div>
+      <div class="stat"><div class="label">Solde</div><div class="value" id="s-solde">—</div></div>
+      <div class="stat"><div class="label">Opérations</div><div class="value" id="s-count">—</div></div>
+    </div>
+
+    <div class="panel" id="panel-form">
+      <div class="panel-head"><h2>Nouvelle opération</h2></div>
+      <div class="field-row">
+        <div class="field">
+          <label>Type d'opération</label>
+          <select id="f-type" onchange="renderFormFields()">
+            <option value="Farming">Farming (récolte de ressource)</option>
+            <option value="Achat">Achat de ressource (fournisseur)</option>
+            <option value="Autre">Dépense / recette diverse</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Employé</label>
+          <select id="f-employe"></select>
+        </div>
+        <div class="field">
+          <label>Date</label>
+          <input type="date" id="f-date">
+        </div>
+      </div>
+      <div id="dyn-fields" class="field-row"></div>
+      <button onclick="submitOperation()">Enregistrer l'opération</button>
+      <div class="login-error" id="form-err"></div>
+      <p style="font-size:12px;color:var(--text-faint);margin-top:10px;">
+        Les ventes sont générées automatiquement depuis la <a href="caisse.html">Caisse</a>,
+        et les fabrications (Craft) depuis le <a href="calculateur.html">Calculateur</a>.
+      </p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Historique des opérations</h2>
+        <input type="text" id="search" placeholder="Rechercher (employé, type, ressource…)" style="width:260px" oninput="renderTable()">
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Date</th><th>Employé</th><th>Type</th><th>Dépense</th><th>Recette</th>
+            <th>Qté articles</th><th>Qté ressources</th><th>Ressource / Article</th><th>Client / Fournisseur</th>
+          </tr></thead>
+          <tbody id="tbl-body"><tr><td colspan="9" class="empty-note">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/app.js"></script>
+<script>
+let ALL_OPS = [], EMPLOYES = [], RESOURCES = [];
+(async () => {
+  const ctx = await requireAuth();
+  if (!ctx) return;
+  document.getElementById("f-date").valueAsDate = new Date();
+
+  // le formulaire de saisie n'est utile qu'aux opérateurs
+  if (ctx.profile.role === "gouvernement") document.getElementById("panel-form").style.display = "none";
+
+  const [{data:emps}, {data:res}] = await Promise.all([
+    supabase.from("employes").select("id,nom,prenom").eq("statut","actif").order("nom"),
+    supabase.from("resources").select("id,nom").order("nom")
+  ]);
+  EMPLOYES = emps||[]; RESOURCES = res||[];
+  document.getElementById("f-employe").innerHTML = EMPLOYES.map(e=>`<option value="${e.id}">${e.prenom} ${e.nom}</option>`).join("");
+  renderFormFields();
+
+  await loadOps();
+  supabase.channel('compta-live')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'comptabilite' }, loadOps)
+    .subscribe();
+})();
+
+function renderFormFields() {
+  const type = document.getElementById("f-type").value;
+  const el = document.getElementById("dyn-fields");
+  const resOptions = RESOURCES.map(r=>`<option value="${r.id}">${r.nom}</option>`).join("");
+  if (type === "Farming" || type === "Achat") {
+    el.innerHTML = `
+      <div class="field"><label>Ressource</label><select id="f-resource">${resOptions}</select></div>
+      <div class="field"><label>Quantité récoltée/achetée</label><input type="number" id="f-qte" value="1" min="0" step="any"></div>
+      ${type === "Achat" ? `<div class="field"><label>Montant dépensé ($)</label><input type="number" id="f-montant" value="0" step="any"></div>
+      <div class="field"><label>Fournisseur (nom)</label><input type="text" id="f-tiers"></div>` : ""}`;
+  } else {
+    el.innerHTML = `
+      <div class="field"><label>Dépense ($)</label><input type="number" id="f-depense" value="0" step="any"></div>
+      <div class="field"><label>Recette ($)</label><input type="number" id="f-recette" value="0" step="any"></div>
+      <div class="field"><label>Note / tiers concerné</label><input type="text" id="f-tiers"></div>`;
+  }
+}
+
+async function submitOperation() {
+  const err = document.getElementById("form-err"); err.textContent = "";
+  const type = document.getElementById("f-type").value;
+  const employe_id = document.getElementById("f-employe").value || null;
+  const date = document.getElementById("f-date").value;
+  try {
+    if (type === "Farming") {
+      const resource_id = document.getElementById("f-resource").value;
+      const qte = Number(document.getElementById("f-qte").value);
+      const { error } = await supabase.rpc("fn_enregistrer_farming", { p_resource_id: resource_id, p_quantite: qte, p_employe_id: employe_id, p_date: date });
+      if (error) throw error;
+    } else if (type === "Achat") {
+      const resource_id = document.getElementById("f-resource").value;
+      const qte = Number(document.getElementById("f-qte").value);
+      const montant = Number(document.getElementById("f-montant").value);
+      const tiers = document.getElementById("f-tiers").value;
+      const { error } = await supabase.rpc("fn_enregistrer_achat", { p_resource_id: resource_id, p_quantite: qte, p_depense: montant, p_employe_id: employe_id, p_fournisseur_nom: tiers });
+      if (error) throw error;
+    } else {
+      const depense = Number(document.getElementById("f-depense").value);
+      const recette = Number(document.getElementById("f-recette").value);
+      const tiers = document.getElementById("f-tiers").value;
+      const { error } = await supabase.from("comptabilite").insert({
+        date_operation: date, employe_id, type_operation: "Autre",
+        depense, recette, client_fournisseur_nom: tiers
+      });
+      if (error) throw error;
+    }
+  } catch (e) { err.textContent = e.message || "Erreur lors de l'enregistrement."; }
+}
+
+async function loadOps() {
+  const { data } = await supabase.from("comptabilite")
+    .select("*, employes(nom,prenom), resources(nom), articles(nom)")
+    .order("date_operation",{ascending:false}).order("created_at",{ascending:false});
+  ALL_OPS = data || [];
+  updateStats();
+  renderTable();
+}
+
+function updateStats() {
+  const recette = ALL_OPS.reduce((a,o)=>a+Number(o.recette||0),0);
+  const depense = ALL_OPS.reduce((a,o)=>a+Number(o.depense||0),0);
+  document.getElementById("s-recette").textContent = money(recette);
+  document.getElementById("s-depense").textContent = money(depense);
+  document.getElementById("s-solde").textContent = money(recette-depense);
+  document.getElementById("s-count").textContent = ALL_OPS.length;
+}
+
+function renderTable() {
+  const q = (document.getElementById("search").value||"").toLowerCase();
+  const rows = ALL_OPS.filter(o => {
+    if (!q) return true;
+    const blob = [o.type_operation, o.employes?.nom, o.employes?.prenom, o.resources?.nom, o.articles?.nom, o.client_fournisseur_nom].join(" ").toLowerCase();
+    return blob.includes(q);
+  });
+  document.getElementById("tbl-body").innerHTML = rows.map(o => `
+    <tr>
+      <td>${dateFR(o.date_operation)}</td>
+      <td>${o.employes ? o.employes.prenom+" "+o.employes.nom : "—"}</td>
+      <td>${o.type_operation}</td>
+      <td>${money(o.depense)}</td>
+      <td>${money(o.recette)}</td>
+      <td>${o.quantite_articles || 0}</td>
+      <td>${o.quantite_ressources || 0}</td>
+      <td>${o.resources?.nom || o.articles?.nom || "—"}</td>
+      <td>${o.client_fournisseur_nom || "—"}</td>
+    </tr>`).join("") || `<tr><td colspan="9" class="empty-note">Aucune opération.</td></tr>`;
+}
+
+function exportCSV() {
+  const header = ["Date","Employé","Type","Dépense","Recette","Qté articles","Qté ressources","Ressource/Article","Client/Fournisseur"];
+  const rows = [header, ...ALL_OPS.map(o => [
+    dateFR(o.date_operation),
+    o.employes ? o.employes.prenom+" "+o.employes.nom : "",
+    o.type_operation, o.depense, o.recette, o.quantite_articles, o.quantite_ressources,
+    o.resources?.nom || o.articles?.nom || "", o.client_fournisseur_nom || ""
+  ])];
+  downloadCSV("comptabilite_shrewsbury_" + new Date().toISOString().slice(0,10) + ".csv", rows);
+}
+</script>
+</body>
+</html>

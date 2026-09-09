@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shrewsbury Armory — Connexion</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-box">
+      <img src="assets/logo.png" onerror="this.style.display='none'">
+      <h1>SHREWSBURY ARMORY</h1>
+      <div class="tag">Espace gestion — accès réservé</div>
+
+      <div class="field">
+        <label>Adresse e-mail du compte</label>
+        <input id="email" type="email" placeholder="pdg@shrewsbury.local" autocomplete="username">
+      </div>
+      <div class="field">
+        <label>Mot de passe</label>
+        <input id="password" type="password" placeholder="••••••••" autocomplete="current-password">
+      </div>
+      <button style="width:100%" onclick="login()">Se connecter</button>
+      <div class="login-error" id="err"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script>
+    // Si déjà connecté, on saute directement au tableau de bord.
+    supabase.auth.getSession().then(({data:{session}}) => {
+      if (session) window.location.href = "dashboard.html";
+    });
+
+    async function login() {
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+      const err = document.getElementById("err");
+      err.textContent = "";
+      if (!email || !password) { err.textContent = "Renseignez l'e-mail et le mot de passe."; return; }
+
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) { err.textContent = "Identifiants incorrects."; return; }
+
+      // vérifie qu'un profil/rôle existe
+      const { data: profile } = await supabase.from("profiles").select("*").eq("id", data.user.id).single();
+      if (!profile || !profile.actif) {
+        err.textContent = "Ce compte n'a pas encore de rôle attribué. Contactez le PDG.";
+        await supabase.auth.signOut();
+        return;
+      }
+      window.location.href = "dashboard.html";
+    }
+    document.getElementById("password").addEventListener("keydown", e => { if (e.key === "Enter") login(); });
+  </script>
+</body>
+</html>

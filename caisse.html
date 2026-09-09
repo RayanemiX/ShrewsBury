@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Caisse — Shrewsbury Armory</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar">
+      <div><div class="eyebrow">Point de vente</div><h1>Caisse</h1></div>
+    </div>
+
+    <div class="invoice-wrap">
+      <!-- ===================== FORMULAIRE ===================== -->
+      <div class="invoice-form panel">
+        <h2>Acheteur & autorisations</h2>
+        <div class="field-row">
+          <div class="field"><label>Nom de l'acheteur</label><input type="text" id="in-nom" oninput="render()"></div>
+          <div class="field"><label>N° carte d'identité</label><input type="text" id="in-cid" oninput="render()"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>PPA</label><input type="text" id="in-ppa" placeholder="Oui / N°..." oninput="render()"></div>
+          <div class="field"><label>Permis de chasse</label><input type="text" id="in-chasse" oninput="render()"></div>
+          <div class="field"><label>Casier judiciaire</label><input type="text" id="in-casier" placeholder="Vierge / mentions" oninput="render()"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Vendeur (employé)</label><select id="in-vendeur" onchange="render()"></select></div>
+          <div class="field"><label>Client existant (optionnel)</label><select id="in-client" onchange="fillFromClient()">
+            <option value="">— aucun —</option>
+          </select></div>
+        </div>
+
+        <h2 style="margin-top:20px;">Articles</h2>
+        <div id="lignes"></div>
+        <div class="field-row" style="margin-top:8px;">
+          <div class="field"><select id="add-article"></select></div>
+          <div class="field" id="add-serie-wrap" style="display:none;"><select id="add-serie"></select></div>
+          <div class="field"><input type="number" id="add-qte" value="1" min="1" style="width:80px"></div>
+          <div class="field" style="align-self:flex-end;"><button class="btn-ghost" onclick="addLigne()">+ Ajouter l'article</button></div>
+        </div>
+
+        <div class="field-row" style="margin-top:14px;">
+          <div class="field"><label>Remise globale ($)</label><input type="number" id="in-remise" value="0" oninput="render()"></div>
+        </div>
+
+        <div style="display:flex; gap:10px; margin-top:16px;">
+          <button onclick="validerVente()">Valider la vente</button>
+          <button class="btn-ghost" onclick="resetCaisse()">Nouvelle facture</button>
+        </div>
+        <div class="login-error" id="caisse-err"></div>
+      </div>
+
+      <!-- ===================== APERÇU FACTURE ===================== -->
+      <div class="invoice-preview-col">
+        <div id="facture-canvas">
+          <div class="f-head">
+            <div class="f-brand">
+              <img src="assets/logo.png" onerror="this.style.display='none'">
+              <div>
+                <div class="t1">SHREWSBURY</div>
+                <div class="t2" style="color:#a3291b;">SHOTGUNS</div>
+              </div>
+            </div>
+            <div class="f-num">
+              FACTURE N° <b id="pv-num">BROUILLON</b><br>
+              Date : <span id="pv-date">—</span>
+            </div>
+          </div>
+          <div style="font-size:11px; margin-top:6px;">Armurerie — Blaine County<br>Vente d'armes à feu réglementée</div>
+          <hr>
+          <div class="f-cols">
+            <div>
+              <b>ACHETEUR</b><br>
+              <span id="pv-acheteur">—</span><br>
+              N° carte d'identité : <span id="pv-cid">—</span>
+            </div>
+            <div style="text-align:right;">
+              <b>AUTORISATIONS</b><br>
+              PPA : <span id="pv-ppa">—</span><br>
+              Permis de chasse : <span id="pv-chasse">—</span><br>
+              Casier judiciaire : <span id="pv-casier">—</span>
+            </div>
+          </div>
+          <hr>
+          <table>
+            <thead><tr><th>Désignation</th><th>N° de série</th><th>Qté</th><th>P.U.</th><th>Remise</th><th>Total</th></tr></thead>
+            <tbody id="pv-lignes"><tr><td colspan="6" style="text-align:center;color:#888;">Aucun produit ajouté</td></tr></tbody>
+          </table>
+          <div class="f-total">
+            Sous-total : <span id="pv-sous-total">0 $</span><br>
+            <span class="big">TOTAL : <span id="pv-total">0 $</span></span>
+          </div>
+          <div class="f-foot">Facture générée automatiquement — Shrewsbury Shotguns</div>
+        </div>
+
+        <div style="display:flex; gap:10px; margin-top:14px;">
+          <button class="btn-brass" onclick="downloadFacture()">Télécharger l'image</button>
+          <button class="btn-ghost" onclick="copyFacture()">Copier l'image</button>
+        </div>
+        <div id="copy-status" style="font-size:12px; color:var(--text-faint); margin-top:6px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/app.js"></script>
+<script>
+let ARTICLES = [], ARMES_DISPO = [], EMPLOYES = [], CLIENTS = [];
+let LIGNES = []; // {article_id, nom, numero_serie, quantite, prix_unitaire, remise, prix}
+
+(async () => {
+  const ctx = await requireAuth(["pdg","gestionnaire"]);
+  if (!ctx) return;
+
+  const [{data:arts},{data:armes},{data:emps},{data:cli}] = await Promise.all([
+    supabase.from("articles").select("*").order("nom"),
+    supabase.from("armes_stock").select("*, articles(nom)").eq("statut","en_stock"),
+    supabase.from("employes").select("id,nom,prenom").eq("statut","actif").order("nom"),
+    supabase.from("clients").select("*").order("nom")
+  ]);
+  ARTICLES = arts||[]; ARMES_DISPO = armes||[]; EMPLOYES = emps||[]; CLIENTS = cli||[];
+
+  document.getElementById("in-vendeur").innerHTML = EMPLOYES.map(e=>`<option value="${e.id}">${e.prenom} ${e.nom}</option>`).join("");
+  document.getElementById("in-client").innerHTML += CLIENTS.map(c=>`<option value="${c.id}">${c.prenom} ${c.nom}</option>`).join("");
+  document.getElementById("add-article").innerHTML = ARTICLES.map(a=>`<option value="${a.id}">${a.nom} — ${money(a.prix)}</option>`).join("");
+  document.getElementById("add-article").addEventListener("change", updateSerieOptions);
+  updateSerieOptions();
+  render();
+
+  // stock en temps réel : rafraîchit les n° de série disponibles
+  supabase.channel('caisse-live')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'armes_stock' }, async () => {
+      const { data } = await supabase.from("armes_stock").select("*, articles(nom)").eq("statut","en_stock");
+      ARMES_DISPO = data || []; updateSerieOptions();
+    }).subscribe();
+})();
+
+function fillFromClient(){
+  const id = document.getElementById("in-client").value;
+  const c = CLIENTS.find(c=>c.id===id);
+  if (c) {
+    document.getElementById("in-nom").value = c.prenom + " " + c.nom;
+    document.getElementById("in-cid").value = c.numero_ville || "";
+  }
+  render();
+}
+
+function updateSerieOptions(){
+  const articleId = document.getElementById("add-article").value;
+  const article = ARTICLES.find(a=>a.id===articleId);
+  const wrap = document.getElementById("add-serie-wrap");
+  if (article && article.est_serialise) {
+    wrap.style.display = "block";
+    const opts = ARMES_DISPO.filter(a=>a.article_id===articleId);
+    document.getElementById("add-serie").innerHTML = opts.map(a=>`<option value="${a.numero_serie}">${a.numero_serie}</option>`).join("")
+      || `<option value="">Aucune en stock</option>`;
+  } else {
+    wrap.style.display = "none";
+  }
+}
+
+function addLigne(){
+  const articleId = document.getElementById("add-article").value;
+  const article = ARTICLES.find(a=>a.id===articleId);
+  if (!article) return;
+  const qte = Number(document.getElementById("add-qte").value) || 1;
+  let numero_serie = null;
+  if (article.est_serialise) {
+    numero_serie = document.getElementById("add-serie").value;
+    if (!numero_serie) { alert("Aucun numéro de série disponible pour cet article."); return; }
+  }
+  LIGNES.push({
+    article_id: article.id, nom: article.nom, numero_serie,
+    quantite: article.est_serialise ? 1 : qte, prix_unitaire: article.prix, remise: 0
+  });
+  render();
+}
+function removeLigne(i){ LIGNES.splice(i,1); render(); }
+function updateLigneField(i, field, val){ LIGNES[i][field] = Number(val); render(); }
+
+function render(){
+  // colonne formulaire : lignes éditables
+  document.getElementById("lignes").innerHTML = LIGNES.map((l,i)=>`
+    <div class="field-row" style="align-items:flex-end;">
+      <div style="flex:2; font-size:13px; padding-bottom:8px;">${l.nom}${l.numero_serie?` <span style="color:var(--text-faint)">(N° ${l.numero_serie})</span>`:""}</div>
+      <div class="field" style="max-width:80px;"><label>Qté</label><input type="number" value="${l.quantite}" min="1" ${l.numero_serie?"disabled":""} onchange="updateLigneField(${i},'quantite',this.value)"></div>
+      <div class="field" style="max-width:100px;"><label>P.U.</label><input type="number" value="${l.prix_unitaire}" onchange="updateLigneField(${i},'prix_unitaire',this.value)"></div>
+      <div class="field" style="max-width:100px;"><label>Remise</label><input type="number" value="${l.remise}" onchange="updateLigneField(${i},'remise',this.value)"></div>
+      <div class="field" style="align-self:center;"><button class="btn-ghost btn-sm" onclick="removeLigne(${i})">✕</button></div>
+    </div>`).join("") || `<div class="empty-note">Aucun article ajouté.</div>`;
+
+  // aperçu facture
+  document.getElementById("pv-date").textContent = new Date().toLocaleDateString("fr-FR");
+  document.getElementById("pv-acheteur").textContent = document.getElementById("in-nom").value || "—";
+  document.getElementById("pv-cid").textContent = document.getElementById("in-cid").value || "—";
+  document.getElementById("pv-ppa").textContent = document.getElementById("in-ppa").value || "—";
+  document.getElementById("pv-chasse").textContent = document.getElementById("in-chasse").value || "—";
+  document.getElementById("pv-casier").textContent = document.getElementById("in-casier").value || "—";
+
+  let sousTotal = 0;
+  const rowsHtml = LIGNES.map(l=>{
+    const total = (l.prix_unitaire * l.quantite) - l.remise;
+    sousTotal += total;
+    return `<tr><td>${l.nom}</td><td>${l.numero_serie||"—"}</td><td>${l.quantite}</td><td>${money(l.prix_unitaire)}</td><td>${money(l.remise)}</td><td>${money(total)}</td></tr>`;
+  }).join("");
+  document.getElementById("pv-lignes").innerHTML = rowsHtml || `<tr><td colspan="6" style="text-align:center;color:#888;">Aucun produit ajouté</td></tr>`;
+
+  const remiseGlobale = Number(document.getElementById("in-remise").value)||0;
+  const total = Math.max(0, sousTotal - remiseGlobale);
+  document.getElementById("pv-sous-total").textContent = money(sousTotal);
+  document.getElementById("pv-total").textContent = money(total);
+}
+
+async function validerVente(){
+  const err = document.getElementById("caisse-err"); err.textContent = "";
+  if (LIGNES.length === 0) { err.textContent = "Ajoutez au moins un article."; return; }
+  try {
+    const { data: numero } = await supabase.rpc("generer_numero_facture");
+    const sousTotal = LIGNES.reduce((a,l)=>a+(l.prix_unitaire*l.quantite - l.remise),0);
+    const remiseGlobale = Number(document.getElementById("in-remise").value)||0;
+    const total = Math.max(0, sousTotal - remiseGlobale);
+
+    const { data: facture, error: fErr } = await supabase.from("factures").insert({
+      numero, acheteur_nom: document.getElementById("in-nom").value,
+      acheteur_carte_identite: document.getElementById("in-cid").value,
+      ppa: document.getElementById("in-ppa").value,
+      permis_chasse: document.getElementById("in-chasse").value,
+      casier_judiciaire: document.getElementById("in-casier").value,
+      sous_total: sousTotal, remise: remiseGlobale, total,
+      vendeur_id: document.getElementById("in-vendeur").value || null,
+      client_id: document.getElementById("in-client").value || null
+    }).select().single();
+    if (fErr) throw fErr;
+
+    const lignesPayload = LIGNES.map(l => ({
+      facture_id: facture.id, article_id: l.article_id, numero_serie: l.numero_serie,
+      quantite: l.quantite, prix_unitaire: l.prix_unitaire, remise_ligne: l.remise,
+      total_ligne: (l.prix_unitaire*l.quantite - l.remise)
+    }));
+    const { error: lErr } = await supabase.from("facture_lignes").insert(lignesPayload);
+    if (lErr) throw lErr;
+
+    const { error: vErr } = await supabase.rpc("fn_valider_facture", { p_facture_id: facture.id });
+    if (vErr) throw vErr;
+
+    document.getElementById("pv-num").textContent = numero;
+    alert("Vente validée : " + numero + " — stock mis à jour et commission enregistrée.");
+  } catch(e) {
+    err.textContent = e.message || "Erreur lors de la validation.";
+  }
+}
+
+function resetCaisse(){
+  LIGNES = [];
+  ["in-nom","in-cid","in-ppa","in-chasse","in-casier"].forEach(id=>document.getElementById(id).value="");
+  document.getElementById("in-remise").value = 0;
+  document.getElementById("pv-num").textContent = "BROUILLON";
+  render();
+}
+
+async function downloadFacture(){
+  const canvas = await html2canvas(document.getElementById("facture-canvas"), { scale: 2, backgroundColor: "#ffffff" });
+  const a = document.createElement("a");
+  a.download = "facture_" + (document.getElementById("pv-num").textContent) + ".png";
+  a.href = canvas.toDataURL("image/png");
+  a.click();
+}
+async function copyFacture(){
+  const status = document.getElementById("copy-status");
+  try {
+    const canvas = await html2canvas(document.getElementById("facture-canvas"), { scale: 2, backgroundColor: "#ffffff" });
+    canvas.toBlob(async (blob) => {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        status.textContent = "Image copiée dans le presse-papiers ✓";
+      } catch(e) {
+        status.textContent = "Copie image non supportée par ce navigateur — utilisez Télécharger.";
+      }
+    });
+  } catch(e) { status.textContent = "Erreur lors de la génération de l'image."; }
+}
+</script>
+</body>
+</html>

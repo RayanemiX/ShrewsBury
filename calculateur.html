@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calculateur — Shrewsbury Armory</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar">
+      <div><div class="eyebrow">Recettes de fabrication — modifiable</div><h1>Calculateur</h1></div>
+      <div id="btn-new-article"></div>
+    </div>
+
+    <div class="panel" id="panel-new" style="display:none;">
+      <h2>Nouvel article</h2>
+      <div class="field-row">
+        <div class="field"><label>Nom</label><input type="text" id="na-nom"></div>
+        <div class="field"><label>Catégorie</label>
+          <select id="na-cat"><option value="arme">Arme</option><option value="munition">Munition</option><option value="equipement">Équipement</option></select>
+        </div>
+        <div class="field"><label>Prix de vente ($)</label><input type="number" id="na-prix" value="0"></div>
+        <div class="field"><label>Suivi par n° de série ?</label>
+          <select id="na-serialise"><option value="false">Non (stock global)</option><option value="true">Oui (arme individuelle)</option></select>
+        </div>
+        <div class="field" style="align-self:flex-end;"><button onclick="createArticle()">Créer l'article</button></div>
+      </div>
+    </div>
+
+    <div id="articles-list"></div>
+  </div>
+</div>
+
+<!-- Modale fabrication -->
+<div id="craft-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:50;">
+  <div class="panel" style="width:380px;">
+    <h2>Fabriquer</h2>
+    <div class="field"><label>Article</label><div id="craft-article-name" style="color:var(--brass)"></div></div>
+    <div class="field"><label>Quantité à fabriquer</label><input type="number" id="craft-qte" value="1" min="1"></div>
+    <div class="field"><label>Employé</label><select id="craft-employe"></select></div>
+    <div class="field" id="craft-serie-field" style="display:none;"><label>N° de série (réel, en votre possession)</label><input type="text" id="craft-serie"></div>
+    <div style="display:flex; gap:10px;">
+      <button onclick="confirmCraft()">Confirmer</button>
+      <button class="btn-ghost" onclick="closeCraft()">Annuler</button>
+    </div>
+    <div class="login-error" id="craft-err"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/app.js"></script>
+<script>
+let ARTICLES = [], RESOURCES = [], RECIPES = [], EMPLOYES = [], IS_OPERATEUR = false;
+
+(async () => {
+  const ctx = await requireAuth();
+  if (!ctx) return;
+  IS_OPERATEUR = ctx.profile.role !== "gouvernement";
+  if (IS_OPERATEUR) {
+    document.getElementById("btn-new-article").innerHTML = `<button class="btn-brass" onclick="togglePanelNew()">+ Nouvel article</button>`;
+  }
+  const [{data:res},{data:emps}] = await Promise.all([
+    supabase.from("resources").select("id,nom").order("nom"),
+    supabase.from("employes").select("id,nom,prenom").eq("statut","actif").order("nom")
+  ]);
+  RESOURCES = res||[]; EMPLOYES = emps||[];
+  document.getElementById("craft-employe").innerHTML = EMPLOYES.map(e=>`<option value="${e.id}">${e.prenom} ${e.nom}</option>`).join("");
+
+  await loadArticles();
+  supabase.channel('calc-live')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'articles' }, loadArticles)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'article_ressources' }, loadArticles)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'resources' }, loadArticles)
+    .subscribe();
+})();
+
+function togglePanelNew(){
+  const p = document.getElementById("panel-new");
+  p.style.display = p.style.display === "none" ? "block" : "none";
+}
+async function createArticle(){
+  const nom = document.getElementById("na-nom").value.trim();
+  if (!nom) return;
+  const { error } = await supabase.from("articles").insert({
+    nom, categorie: document.getElementById("na-cat").value,
+    prix: Number(document.getElementById("na-prix").value),
+    est_serialise: document.getElementById("na-serialise").value === "true"
+  });
+  if (error) { alert(error.message); return; }
+  document.getElementById("na-nom").value = "";
+  togglePanelNew();
+}
+
+async function loadArticles(){
+  const [{data:arts},{data:recipes}] = await Promise.all([
+    supabase.from("articles").select("*").order("categorie").order("nom"),
+    supabase.from("article_ressources").select("*, resources(nom)")
+  ]);
+  ARTICLES = arts||[]; RECIPES = recipes||[];
+  renderArticles();
+}
+
+function renderArticles(){
+  const resOptions = RESOURCES.map(r=>`<option value="${r.id}">${r.nom}</option>`).join("");
+  document.getElementById("articles-list").innerHTML = ARTICLES.map(a => {
+    const recipe = RECIPES.filter(r => r.article_id === a.id);
+    const rows = recipe.map(r => `
+      <tr>
+        <td>${r.resources.nom}</td>
+        <td>
+          <input type="number" value="${r.quantite_requise}" step="any" style="width:90px"
+            ${IS_OPERATEUR ? `onchange="updateRecipeQty('${r.id}', this.value)"` : "disabled"}>
+        </td>
+        ${IS_OPERATEUR ? `<td><button class="btn-ghost btn-sm" onclick="deleteRecipeRow('${r.id}')">✕</button></td>` : ""}
+      </tr>`).join("");
+    return `
+    <div class="panel">
+      <div class="panel-head">
+        <h2>${a.nom} <span style="font-size:12px;color:var(--text-faint);">— ${a.categorie}${a.est_serialise?" · sérialisé":""}</span></h2>
+        ${IS_OPERATEUR ? `<button class="btn-sm" onclick="openCraft('${a.id}','${a.nom.replace(/'/g,"\\'")}',${a.est_serialise})">Fabriquer</button>` : ""}
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Prix de vente</label>
+          <input type="number" value="${a.prix}" ${IS_OPERATEUR?`onchange="updateArticlePrix('${a.id}', this.value)"`:"disabled"} style="width:140px">
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Ressource requise</th><th>Quantité (pour 1 unité)</th>${IS_OPERATEUR?"<th></th>":""}</tr></thead>
+          <tbody>${rows || `<tr><td colspan="3" class="empty-note">Aucune ressource requise.</td></tr>`}</tbody>
+        </table>
+      </div>
+      ${IS_OPERATEUR ? `
+      <div class="field-row" style="margin-top:10px;">
+        <div class="field"><select id="add-res-${a.id}">${resOptions}</select></div>
+        <div class="field"><input type="number" id="add-qte-${a.id}" placeholder="Quantité" value="1" step="any" style="width:100px"></div>
+        <div class="field"><button class="btn-ghost btn-sm" onclick="addRecipeRow('${a.id}')">+ Ajouter au besoin</button></div>
+      </div>` : ""}
+    </div>`;
+  }).join("") || `<div class="empty-note">Aucun article. Créez-en un ci-dessus.</div>`;
+}
+
+async function updateRecipeQty(id, val){
+  await supabase.from("article_ressources").update({ quantite_requise: Number(val) }).eq("id", id);
+}
+async function deleteRecipeRow(id){
+  await supabase.from("article_ressources").delete().eq("id", id);
+}
+async function addRecipeRow(articleId){
+  const resource_id = document.getElementById("add-res-"+articleId).value;
+  const qte = Number(document.getElementById("add-qte-"+articleId).value);
+  const { error } = await supabase.from("article_ressources").upsert(
+    { article_id: articleId, resource_id, quantite_requise: qte }, { onConflict: "article_id,resource_id" }
+  );
+  if (error) alert(error.message);
+}
+async function updateArticlePrix(id, val){
+  await supabase.from("articles").update({ prix: Number(val) }).eq("id", id);
+}
+
+let craftTarget = null;
+function openCraft(articleId, nom, serialise){
+  craftTarget = { articleId, serialise };
+  document.getElementById("craft-article-name").textContent = nom;
+  document.getElementById("craft-serie-field").style.display = serialise ? "block" : "none";
+  document.getElementById("craft-qte").value = 1;
+  document.getElementById("craft-serie").value = "";
+  document.getElementById("craft-err").textContent = "";
+  document.getElementById("craft-modal").style.display = "flex";
+}
+function closeCraft(){ document.getElementById("craft-modal").style.display = "none"; }
+async function confirmCraft(){
+  const err = document.getElementById("craft-err"); err.textContent = "";
+  const qte = Number(document.getElementById("craft-qte").value);
+  const employe_id = document.getElementById("craft-employe").value;
+  const serie = document.getElementById("craft-serie").value.trim();
+  const { error } = await supabase.rpc("fn_crafter_article", {
+    p_article_id: craftTarget.articleId, p_quantite: qte, p_employe_id: employe_id,
+    p_numero_serie: craftTarget.serialise ? serie : null
+  });
+  if (error) { err.textContent = error.message; return; }
+  closeCraft();
+}
+</script>
+</body>
+</html>
