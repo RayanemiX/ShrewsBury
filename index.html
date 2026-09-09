@@ -31,32 +31,109 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script>
-    // Si déjà connecté, on saute directement au tableau de bord.
-    supabase.auth.getSession().then(({data:{session}}) => {
-      if (session) window.location.href = "dashboard.html";
+ <script>
+    const supabaseClient = window.supabaseClient;
+
+    // Vérifie que le client existe
+    console.log("Supabase client :", supabaseClient);
+
+    // Si déjà connecté, on saute directement au tableau de bord
+    supabaseClient.auth.getSession().then(({ data: { session }, error }) => {
+
+        if (error) {
+            console.error("Erreur récupération session :", error);
+            return;
+        }
+
+        if (session) {
+            window.location.href = "dashboard.html";
+        }
     });
 
     async function login() {
-      const email = document.getElementById("email").value.trim();
-      const password = document.getElementById("password").value;
-      const err = document.getElementById("err");
-      err.textContent = "";
-      if (!email || !password) { err.textContent = "Renseignez l'e-mail et le mot de passe."; return; }
 
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) { err.textContent = "Identifiants incorrects."; return; }
+        const email = document.getElementById("email").value.trim();
+        const password = document.getElementById("password").value;
+        const err = document.getElementById("err");
 
-      // vérifie qu'un profil/rôle existe
-      const { data: profile } = await supabase.from("profiles").select("*").eq("id", data.user.id).single();
-      if (!profile || !profile.actif) {
-        err.textContent = "Ce compte n'a pas encore de rôle attribué. Contactez le PDG.";
-        await supabase.auth.signOut();
-        return;
-      }
-      window.location.href = "dashboard.html";
+        err.textContent = "";
+
+        if (!email || !password) {
+            err.textContent = "Renseignez l'e-mail et le mot de passe.";
+            return;
+        }
+
+        console.log("Tentative de connexion :", email);
+
+        const { data, error } =
+            await supabaseClient.auth.signInWithPassword({
+                email: email,
+                password: password
+            });
+
+        console.log("Auth data :", data);
+        console.log("Auth error :", error);
+
+        if (error) {
+            console.error("Erreur connexion :", error);
+            err.textContent = error.message;
+            return;
+        }
+
+        console.log("Connexion Supabase réussie !");
+
+        // Recherche du profil
+        const {
+            data: profile,
+            error: profileError
+        } = await supabaseClient
+            .from("profiles")
+            .select("*")
+            .eq("id", data.user.id)
+            .single();
+
+        console.log("Profil :", profile);
+        console.log("Erreur profil :", profileError);
+
+        if (profileError) {
+            console.error("Erreur récupération profil :", profileError);
+
+            err.textContent =
+                "Erreur lors de la récupération du profil : " +
+                profileError.message;
+
+            return;
+        }
+
+        if (!profile) {
+            err.textContent =
+                "Aucun profil trouvé pour ce compte.";
+
+            await supabaseClient.auth.signOut();
+            return;
+        }
+
+        if (!profile.actif) {
+            err.textContent =
+                "Ce compte est désactivé.";
+
+            await supabaseClient.auth.signOut();
+            return;
+        }
+
+        console.log("Profil valide :", profile);
+        console.log("Redirection vers dashboard...");
+
+        window.location.href = "dashboard.html";
     }
-    document.getElementById("password").addEventListener("keydown", e => { if (e.key === "Enter") login(); });
-  </script>
-</body>
-</html>
+
+    document
+        .getElementById("password")
+        .addEventListener("keydown", function(e) {
+
+            if (e.key === "Enter") {
+                login();
+            }
+
+        });
+</script>
