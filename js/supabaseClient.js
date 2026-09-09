@@ -1,6 +1,4 @@
-// js/supabaseClient.js
-
-window.supabaseClient = window.supabase.createClient(
+const supabaseClient = window.supabase.createClient(
     SUPABASE_URL,
     SUPABASE_ANON_KEY,
     {
@@ -12,4 +10,7 @@ window.supabaseClient = window.supabase.createClient(
     }
 );
 
-console.log("Supabase client initialisé :", window.supabaseClient);
+window.supabaseClient = supabaseClient;
+window.supabase = supabaseClient;
+
+console.log("✓ Client Supabase initialisé");
